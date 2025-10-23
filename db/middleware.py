@@ -2,8 +2,8 @@
 from aiogram import BaseMiddleware
 from typing import Callable, Dict, Any, Awaitable
 from sqlalchemy.ext.asyncio import AsyncSession
-from .base import session_factory
-from .users_repo import UsersRepo
+from base import session_factory
+from users_repo import UsersRepo
 
 class DbSessionMiddleware(BaseMiddleware):
     async def __call__(
