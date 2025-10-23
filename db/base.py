@@ -20,9 +20,9 @@ async def init_db(db_url: str = "sqlite+aiosqlite:///./bot.sqlite3") -> None:
 async def create_tables() -> None:
     from .models import User  # noqa
     async with engine.begin() as conn:  # type: ignore[arg-type]
+        await conn.run_sync(Base.metadata.create_all)
         await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
         await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
-        await conn.run_sync(Base.metadata.create_all)
 
 # Утилита-синглтон для выдачи сессии
 def session_factory() -> async_sessionmaker[AsyncSession]:

@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 # UsersRepo инжектится через middleware (data["users_repo"])
 from db.users_repo import UsersRepo
 
-router = Router(name="user_cmd")
+router = Router(name="user_router")
 
 class UserStates(StatesGroup):
     waiting_for_id = State()
@@ -45,12 +45,12 @@ async def save_user_id(
     )
 
 
-@router.message(UserStates.waiting_for_id)
-async def wrong_format(message: types.Message):
-    await message.answer("Нужно отправить только число. Например: 123456789.")
-
-
 @router.message(Command("cancel"))
 async def cancel(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Ок, отменил.")
+
+@router.message(UserStates.waiting_for_id)
+async def wrong_format(message: types.Message):
+    await message.answer("Нужно отправить только число. Например: 123456789.")
+

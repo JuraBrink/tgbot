@@ -3,7 +3,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-router = Router()
+router = Router(name="main_router")
 
 @router.message(Command('mark'))
 async def cmd_mark(message: Message):
@@ -16,10 +16,6 @@ async def cmd_mark(message: Message):
 @router.message(Command('settings'))
 async def cmd_mark(message: Message):
     await message.answer('Settings are saved')
-
-@router.message(Command('user'))
-async def cmd_mark(message: Message):
-    await message.answer('New user is added')
 
 @router.message()
 async def cmd_start(message: Message):

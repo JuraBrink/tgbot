@@ -1,7 +1,7 @@
 # bot/db/users_repo.py
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from models import User
+from db.models import User
 
 class UsersRepo:
     def __init__(self, session: AsyncSession):
