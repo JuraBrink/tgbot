@@ -153,7 +153,7 @@ async def handle_baseline_input(
         t.cancel()
 
     # Достаём сессию из data на случай иного ключа
-    session = session or data.get("session") or data.get("db") or data.get("sa")
+    session = session or data.get("db_session") or data.get("session") or data.get("db") or data.get("sa")
     if session is None:
         await message.answer("Внутренняя ошибка: нет соединения с БД")
         await state.clear()
