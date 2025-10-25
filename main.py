@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from app.handlers import router as other_router
 from app.routers.user import router as user_router
+from app.routers.settings import router as settings_router
 from app.commands import setup_commands
 from app.middlewares.auth import AuthMiddleware
 from db.middleware import DbSessionMiddleware
@@ -39,6 +40,7 @@ async def main():
 
     # Роутеры
     dp.include_router(user_router)
+    dp.include_router(settings_router)    
     dp.include_router(other_router)
 
     await dp.start_polling(bot)
