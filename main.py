@@ -1,35 +1,43 @@
 import os
 import asyncio
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from dotenv import load_dotenv
+
 from app.handlers import router as other_router
-from dotenv import load_dotenv  # <-- импортируем
-from app.commands import setup_commands, delete_commands
 from app.routers.user import router as user_router
+from app.commands import setup_commands
+from app.middlewares.auth import AuthMiddleware
 from db.middleware import DbSessionMiddleware
 from db.base import init_db, create_tables
+from aiogram.client.default import DefaultBotProperties
 
-load_dotenv()  # загружаем переменные из .env
+load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN", "")
-bot = Bot(token = TOKEN) # @testmyaiogram_bot
-dp = Dispatcher()
+if not TOKEN:
+    raise RuntimeError("Переменная окружения BOT_TOKEN не задана")
 
+bot = Bot(
+    token=TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
+dp = Dispatcher(storage=MemoryStorage())
 
-async def on_startup(dispatcher: Dispatcher):
-    # Регистрируем команды (можно оставить try/except вокруг scope=chat как обсуждали раньше)
-    #await delete_commands(bot)
+async def on_startup():
+    # Создаём таблицы, включаем WAL и FK
+    await init_db("sqlite+aiosqlite:///./bot.sqlite3")
+    await create_tables()
     await setup_commands(bot)
 
-
 async def main():
+    # DB middleware должен идти раньше AuthMiddleware
+    dp.update.middleware(DbSessionMiddleware())
+    dp.update.middleware(AuthMiddleware())
 
-    await init_db()
-    await create_tables()
-
-    dp.update.middleware(DbSessionMiddleware())  # обязательно до старта поллинга
-    
     dp.startup.register(on_startup)
 
+    # Роутеры
     dp.include_router(user_router)
     dp.include_router(other_router)
 
@@ -38,5 +46,5 @@ async def main():
 if __name__ == '__main__':
     try:
         asyncio.run(main())
-    except KeyboardInterrupt: 
+    except KeyboardInterrupt:
         print('Bot stopped')

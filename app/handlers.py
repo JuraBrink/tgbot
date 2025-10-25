@@ -19,7 +19,7 @@ async def cmd_mark(message: Message):
 
 @router.message()
 async def cmd_start(message: Message):
-    await message.answer(f'Hello {message.chat.full_name}. Please send your ID:{message.chat.id} to the administrator') # f"Ок, ставка: {s.rate} {s.currency}/час"
+    await message.answer('Error!!!') # f"Ок, ставка: {s.rate} {s.currency}/час"
     # await message.reply('uu router')
 
    
