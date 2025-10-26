@@ -1,4 +1,3 @@
-dotenv
 aiogram>=3.4
 SQLAlchemy>=2.0
 aiosqlite>=0.19

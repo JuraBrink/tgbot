@@ -18,7 +18,7 @@ async def init_db(db_url: str = "sqlite+aiosqlite:///./bot.sqlite3") -> None:
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 async def create_tables() -> None:
-    from .models import User  # noqa
+    from . import models  # noqa
     async with engine.begin() as conn:  # type: ignore[arg-type]
         await conn.run_sync(Base.metadata.create_all)
         await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
