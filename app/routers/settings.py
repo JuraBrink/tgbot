@@ -16,7 +16,9 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from db.models import UserSettings  # <-- используем ORM-модель
+from sqlalchemy import select
+
+from db.models import UserSettings  # ORM-модель
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,10 +41,37 @@ class BaselineStates(StatesGroup):
     waiting_for_input = State()
 
 
-def _kb(message_id: int, user_id: int):
+# ===== Утилиты формирования подписи кнопки =====
+
+async def _get_start_label(session: "AsyncSession", tg_id: int) -> str:
+    """
+    Собирает подпись для кнопки Start на основе user_settings для tg_id.
+    Если записи нет — возвращает дефолт "Start 00.00.0000, 00:00".
+    """
+    result = await session.execute(
+        select(UserSettings).where(UserSettings.user_id == tg_id)
+    )
+    row: UserSettings | None = result.scalar_one_or_none()
+    if not row:
+        return "Start 00.00.0000, 00:00"
+
+    # row.baseline_date: 'YYYY-MM-DD'
+    try:
+        y, m, d = map(int, row.baseline_date.split("-"))
+        ddmmyyyy = f"{d:02d}.{m:02d}.{y:04d}"
+    except Exception:
+        ddmmyyyy = "00.00.0000"
+
+    mins = int(row.baseline_worked_min or 0)
+    return f"Start {ddmmyyyy}, {mins // 60:02d}:{mins % 60:02d}"
+
+
+def _kb_with_label(message_id: int, user_id: int, start_label: str):
     b = InlineKeyboardBuilder()
-    b.button(text="Start",
-             callback_data=StartCb(action="start", mid=message_id, uid=user_id).pack())
+    b.button(
+        text=start_label,
+        callback_data=StartCb(action="start", mid=message_id, uid=user_id).pack(),
+    )
     return b.as_markup()
 
 
@@ -54,25 +83,59 @@ async def _expire_after(bot: Bot, chat_id: int, message_id: int):
         if task is None:
             return
         with suppress(TelegramBadRequest):
-            await bot.edit_message_reply_markup(chat_id=chat_id,
-                                                message_id=message_id,
-                                                reply_markup=None)
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=message_id, reply_markup=None
+            )
     except asyncio.CancelledError:
         pass
 
 
+# ===== /settings =====
 @router.message(Command("settings"))
-async def cmd_settings(message: Message, bot: Bot):
+async def cmd_settings(
+    message: Message,
+    bot: Bot,
+    session: "AsyncSession" | None = None,
+    **data,
+):
+    """
+    Рендер меню настроек с динамической подписью кнопки Start.
+    Берём сессию из middleware: data["db_session"].
+    """
+    # Достаём сессию из data на случай другого ключа
+    session = data.get("db_session")
+
     msg = await message.answer("Settings")
-    await bot.edit_message_reply_markup(chat_id=msg.chat.id,
-                                        message_id=msg.message_id,
-                                        reply_markup=_kb(msg.message_id, message.from_user.id))
+
+    # Собираем текст для Start
+    start_label = "Start 00.00.0000, 00:00"
+    if session is not None:
+        try:
+            start_label = await _get_start_label(session, message.from_user.id)
+        except Exception:
+            # В случае ошибки — дефолт
+            pass
+
+    # Навешиваем клавиатуру
+    await bot.edit_message_reply_markup(
+        chat_id=msg.chat.id,
+        message_id=msg.message_id,
+        reply_markup=_kb_with_label(msg.message_id, message.from_user.id, start_label),
+    )
+
+    # Запускаем авто-снятие клавиатуры
     task = asyncio.create_task(_expire_after(bot, msg.chat.id, msg.message_id))
     _tasks[(msg.chat.id, msg.message_id)] = task
 
 
+# ===== Нажатие на Start =====
 @router.callback_query(StartCb.filter(F.action == "start"))
-async def on_start_click(cb: CallbackQuery, callback_data: StartCb, bot: Bot, state: FSMContext):
+async def on_start_click(
+    cb: CallbackQuery,
+    callback_data: StartCb,
+    bot: Bot,
+    state: FSMContext,
+):
     if cb.from_user.id != callback_data.uid:
         await cb.answer("Эта кнопка не для вас", show_alert=True)
         return
@@ -80,10 +143,13 @@ async def on_start_click(cb: CallbackQuery, callback_data: StartCb, bot: Bot, st
     chat_id = cb.message.chat.id
     message_id = cb.message.message_id
 
+    # Сохраним id сообщения настроек, чтобы обновить клавиатуру после сохранения
+    await state.update_data(settings_msg_id=message_id, settings_chat_id=chat_id)
+
     with suppress(TelegramBadRequest):
-        await bot.edit_message_reply_markup(chat_id=chat_id,
-                                            message_id=message_id,
-                                            reply_markup=None)
+        await bot.edit_message_reply_markup(
+            chat_id=chat_id, message_id=message_id, reply_markup=None
+        )
 
     task = _tasks.pop((chat_id, message_id), None)
     if task and not task.done():
@@ -122,20 +188,31 @@ def _parse_baseline(text: str) -> tuple[date, int]:
     dm = _DATE_RX.search(cleaned)
     if not dm:
         raise ValueError("Неверный формат даты")
-    d, m, y = map(int, dm.groups())
-    if y < 100:
-        y += 2000
-    baseline_date = date(y, m, d)
 
-    tm = re.search(r"(\d{1,3})\s*:\s*(\d{2})", cleaned)  # H+:MM
-    if not tm:
-        raise ValueError("Неверный формат времени")
-    hh, mm = map(int, tm.groups())
-    if mm >= 60:
-        raise ValueError("Минуты должны быть 00..59")
-    baseline_minutes = hh * 60 + mm
+    dd = int(dm.group(1))
+    mm = int(dm.group(2))
+    yy = int(dm.group(3))
+    if yy < 100:
+        yy += 2000
 
-    return baseline_date, baseline_minutes
+    # время — всё, что после запятой
+    parts = cleaned.split(",", 1)
+    if len(parts) == 1:
+        raise ValueError("Не нашли время 'HH:MM' после запятой")
+
+    tm = parts[1].strip()
+    if ":" not in tm:
+        raise ValueError("Ожидали формат 'HH:MM'")
+
+    hh_s, mm_s = tm.split(":", 1)
+    hh = int(hh_s)
+    mn = int(mm_s)
+
+    if not (0 <= mn < 60):
+        raise ValueError("Минуты должны быть 0..59")
+
+    # дата как date, минуты как int
+    return date(yy, mm, dd), hh * 60 + mn
 
 
 # ===== Сохранение =====
@@ -143,6 +220,7 @@ def _parse_baseline(text: str) -> tuple[date, int]:
 async def handle_baseline_input(
     message: Message,
     state: FSMContext,
+    bot: Bot,
     session: "AsyncSession" | None = None,
     **data,
 ):
@@ -164,28 +242,21 @@ async def handle_baseline_input(
     except Exception:
         await message.answer(
             "Неверный формат. Пример: 25.10.2025, 56:30\n"
-            "Допустимые разделители даты: '.', '/', '-'"
+            "Допустимы разделители даты: точка/слэш/дефис. Время строго HH:MM."
         )
-        async def _retry_timeout():
-            try:
-                await asyncio.sleep(60)
-                with suppress(Exception):
-                    await state.clear()
-            except asyncio.CancelledError:
-                pass
-            finally:
-                _input_timeouts.pop(user_id, None)
-        _input_timeouts[user_id] = asyncio.create_task(_retry_timeout())
         return
 
-    # ORM upsert: get → insert/update
-    row = await session.get(UserSettings, user_id)
+    # upsert по ключу user_id = tg_id
+    result = await session.execute(
+        select(UserSettings).where(UserSettings.user_id == user_id)
+    )
+    row: UserSettings | None = result.scalar_one_or_none()
     if row is None:
         row = UserSettings(
             user_id=user_id,
-            baseline_date=bdate.isoformat(),
-            baseline_worked_min=int(bmin),
-            updated_at=UserSettings.now_iso(),
+            baseline_date=bdate.isoformat(),            # YYYY-MM-DD
+            baseline_worked_min=int(bmin),             # минуты
+            updated_at=UserSettings.now_iso(),         # ISO datetime
         )
         session.add(row)
     else:
@@ -194,6 +265,22 @@ async def handle_baseline_input(
         row.updated_at = UserSettings.now_iso()
 
     await session.commit()
+
+    # Обновим клавиатуру настроек, если знаем исходное сообщение
+    st_data = await state.get_data()
+    chat_id = st_data.get("settings_chat_id")
+    msg_id = st_data.get("settings_msg_id")
+    if chat_id and msg_id:
+        try:
+            start_label = await _get_start_label(session, user_id)
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=msg_id,
+                reply_markup=_kb_with_label(msg_id, user_id, start_label),
+            )
+        except Exception:
+            # Если сообщение уже удалили/истёк таймер — просто игнорируем
+            pass
 
     await message.answer(
         f"Сохранил: дата {bdate.strftime('%d.%m.%Y')}, "
