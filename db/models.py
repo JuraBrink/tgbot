@@ -18,6 +18,8 @@ class UserSettings(Base):
     user_settings: базовая точка для расчёта отчетов по пользователю.
     baseline_date хранится в ISO (YYYY-MM-DD) строкой, чтобы не зависеть от TZ.
     updated_at — ISO с точностью до секунд.
+    reminder_minutes — минуты с начала суток (0..1439), где 0 = OFF.
+    timezone — IANA (например, 'Europe/Warsaw').
     """
     __tablename__ = "user_settings"
 
@@ -25,6 +27,10 @@ class UserSettings(Base):
     baseline_date: Mapped[str] = mapped_column(String, nullable=False)        # YYYY-MM-DD
     baseline_worked_min: Mapped[int] = mapped_column(Integer, nullable=False) # минуты
     updated_at: Mapped[str] = mapped_column(String, nullable=False)           # ISO datetime
+
+    # Новые поля
+    reminder_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0) # 0 = OFF
+    timezone: Mapped[str] = mapped_column(String, nullable=False, default="Europe/Warsaw")
 
     @staticmethod
     def now_iso() -> str:
