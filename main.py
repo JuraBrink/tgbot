@@ -11,7 +11,7 @@ from app.commands import setup_commands
 from app.middlewares.auth import AuthMiddleware
 from db.middleware import DbSessionMiddleware
 from db.base import init_db, create_tables, session_factory
-from db.migrate import ensure_user_settings_columns
+from db.migrate import ensure_user_settings_columns, ensure_work_tables
 from aiogram.client.default import DefaultBotProperties
 
 from app.scheduler import setup_scheduler, schedule_user_reminder
@@ -37,6 +37,7 @@ async def main():
     await init_db(os.getenv('DATABASE_URL', 'sqlite+aiosqlite:///./bot.sqlite3'))
     await create_tables()
     await ensure_user_settings_columns()
+    await ensure_work_tables()
 
     bot = Bot(token=os.getenv('BOT_TOKEN'), default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=MemoryStorage())

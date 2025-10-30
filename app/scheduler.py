@@ -24,11 +24,30 @@ def get_scheduler() -> AsyncIOScheduler:
 
 # ===== reminders (пн–сб) =====
 async def send_reminder(tg_id: int) -> None:
+    """
+    Вместо текста «Напоминание…» отправляем единое сервисное сообщение
+    «Укажите время работы:» с инлайн-клавиатурой (последние 4 шаблона)
+    и автоскрытием клавиатуры через 60 секунд.
+    """
     assert _bot is not None, "Bot is not set"
-    try:
-        await _bot.send_message(chat_id=tg_id, text="Напоминание: пора отметить рабочее время.")
-    except Exception:
-        pass
+
+    # Берём последние шаблоны пользователя и собираем клавиатуру
+    from db.base import session_factory
+    from db.work_repo import WorkRepo
+    from app.kb import build_work_kb
+
+    Session = session_factory()
+    async with Session() as session:
+        wr = WorkRepo(session)
+        templates = await wr.get_templates(tg_id)
+
+    msg = await _bot.send_message(
+        chat_id=tg_id,
+        text="Укажите время работы:",
+        reply_markup=build_work_kb(templates, include_help=True)
+    )
+    # автоскрытие клавиатуры через 60 секунд
+    schedule_kb_expire(msg.chat.id, msg.message_id, seconds=60)
 
 def _rem_job_id(user_id: int) -> str:
     return f"reminder:{user_id}"
